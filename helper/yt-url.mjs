@@ -20,9 +20,10 @@ export function resolveYouTube(input, depth = 0) {
     const inner = u.searchParams.get("u") ?? u.searchParams.get("q") ?? u.searchParams.get("url");
     if (inner) return resolveYouTube(new URL(inner, "https://www.youtube.com").href, depth + 1);
   }
-  if (id && ID.test(id)) return new URL(`https://www.youtube.com/watch?v=${id}`);
-  if (u.searchParams.get("list") && !id) throw new Error("Playlist links are not supported - paste a single video link");
-  return u; // clips, etc. - let yt-dlp decide
+  if (id && ID.test(id) && id !== "videoseries") return new URL(`https://www.youtube.com/watch?v=${id}`);
+  if (u.searchParams.get("list") && (!id || id === "videoseries")) throw new Error("Playlist links are not supported here - use Import playlist");
+  if (seg[0] === "clip" && seg[1]) return u;                                    // clips: let yt-dlp resolve them
+  throw new Error("Unsupported YouTube link - paste a link to a single video");  // channels, searches, home page...
 }
 
 /** Playlist link (any YouTube URL carrying ?list=) -> canonical playlist URL. */

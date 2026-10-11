@@ -41,5 +41,6 @@
   "YTA.OutdatedBody": "This module needs YouTube Audio Helper {need} or newer. Close the running helper window, download the new foundry-yt-helper exe and run it.",
   "YTA.Helper.Ok": "Helper v{v} is running.",
   "YTA.Helper.Missing": "Helper is not running.",
-  "YTA.Helper.Outdated": "Helper {found} is outdated (need {need})."
+  "YTA.Helper.Outdated": "Helper {found} is outdated (need {need}).",
+  "YTA.Truncated": "This playlist has more than 300 videos; only the first 300 are imported."
 }

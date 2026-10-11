@@ -1,7 +1,7 @@
 const ID = "yt-audio-importer";
 const { ApplicationV2 } = foundry.applications.api;
 const HELPER_REQUIRED = "1.1.0"; // minimum helper version this module works with
-const HELPER_LATEST = "1.1.2";   // helper version attached to this module release (download link)
+const HELPER_LATEST = "1.1.3";   // helper version attached to this module release (download link)
 const HELPER_FILE = `foundry-yt-helper-v${HELPER_LATEST}.exe`;
 const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
 const cmpVer = (a, b) => {
@@ -16,8 +16,11 @@ async function checkHelper() {
   let j;
   try {
     const r = await fetch(`${helper}/health`);
+    if (!r.ok) return { state: "missing" };
     j = await r.json().catch(() => null);
   } catch { return { state: "missing" }; }
+  if (j?.name && j.name !== "yt-audio-helper") return { state: "missing" };
+  if (j?.version) j.version = String(j.version).slice(0, 20);
   if (!j?.version || j.version === "dev") return { state: j?.version === "dev" ? "ok" : "outdated", version: j?.version };
   return { state: cmpVer(j.version, HELPER_REQUIRED) < 0 ? "outdated" : "ok", version: j.version };
 }
@@ -101,6 +104,7 @@ function fetchWithProgress(url, onProgress) {
 }
 
 class YtImporter extends ApplicationV2 {
+  #busy = false;
   static DEFAULT_OPTIONS = {
     id: "yt-audio-importer",
     window: { title: "YTA.Title", icon: "fa-brands fa-youtube" },
@@ -154,8 +158,8 @@ class YtImporter extends ApplicationV2 {
     const [soundBtn, listBtn] = result.querySelectorAll(".yta-go");
     const update = () => {
       const d = detectLink(input.value);
-      soundBtn.disabled = !d.video;
-      listBtn.disabled = !d.list;
+      soundBtn.disabled = !d.video || this.#busy;
+      listBtn.disabled = !d.list || this.#busy;
       soundBtn.classList.toggle("default", d.video && !d.list);
       listBtn.classList.toggle("default", d.list && !d.video);
       note.textContent = d.list && d.video ? t("YTA.Detect.Both") : d.list ? t("YTA.Detect.List") : d.video ? t("YTA.Detect.Video") : "";
@@ -164,15 +168,15 @@ class YtImporter extends ApplicationV2 {
     input.addEventListener("paste", () => setTimeout(update));
     result.addEventListener("click", ev => {
       const btn = ev.target.closest(".yta-go");
-      if (btn && !btn.disabled) this.#run(result, btn.dataset.mode);
-      if (ev.target.closest(".yta-cancel")) this.cancelled = true;
+      if (btn && !btn.disabled && !this.#busy) this.#run(result, btn.dataset.mode);
+      if (ev.target.closest(".yta-cancel") && this.ctl) this.ctl.cancelled = true;
     });
     update();
     const hs = result.querySelector(".yta-helper");
     const link = `<a href="${HELPER_URL}" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> ${t("YTA.GetHelper")}</a>`;
     checkHelper().then(c => {
-      hs.innerHTML = c.state === "ok" ? `<i class="fa-solid fa-circle-check"></i> ${t("YTA.Helper.Ok", { v: c.version })}`
-        : c.state === "outdated" ? `<i class="fa-solid fa-triangle-exclamation"></i> ${t("YTA.Helper.Outdated", { found: c.version ?? "?", need: HELPER_REQUIRED })} ${link}`
+      hs.innerHTML = c.state === "ok" ? `<i class="fa-solid fa-circle-check"></i> ${t("YTA.Helper.Ok", { v: foundry.utils.escapeHTML(c.version) })}`
+        : c.state === "outdated" ? `<i class="fa-solid fa-triangle-exclamation"></i> ${t("YTA.Helper.Outdated", { found: foundry.utils.escapeHTML(c.version ?? "?"), need: HELPER_REQUIRED })} ${link}`
         : `<i class="fa-solid fa-circle-xmark"></i> ${t("YTA.Helper.Missing")} ${link}`;
     });
   }
@@ -203,7 +207,8 @@ class YtImporter extends ApplicationV2 {
     box.querySelector("[data-step=playlist]").hidden = !isList;
     goBtns.forEach(b => (b.disabled = true));
     cancelBtn.hidden = !isList;
-    this.cancelled = false;
+    this.#busy = true;
+    const ctl = (this.ctl = { cancelled: false });
     status.textContent = "";
     resetItem();
     const common = {
@@ -214,7 +219,7 @@ class YtImporter extends ApplicationV2 {
     try {
       if (isList) {
         const res = await importPlaylist(url, {
-          ...common, isCancelled: () => this.cancelled,
+          ...common, isCancelled: () => ctl.cancelled,
           onItem: (i, n, title) => { resetItem(); bars.playlist((i - 1) / n * 100); box.querySelector(".yta-title").textContent = `${i}/${n} - ${title}`; }
         });
         bars.playlist(100);
@@ -227,6 +232,7 @@ class YtImporter extends ApplicationV2 {
       status.textContent = t("YTA.Err", { msg: err.message });
       if (err.noHelper) offerHelper(err);
     } finally {
+      this.#busy = false;
       cancelBtn.hidden = true;
       form.elements.url.dispatchEvent(new Event("input"));
     }
@@ -369,9 +375,15 @@ export async function importPlaylist(url, opts = {}) {
 
   let pl = opts.playlist;
   if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
-  if (!(pl instanceof Playlist)) pl = game.playlists.getName(info.title) ?? await Playlist.create({ name: info.title });
+  if (!(pl instanceof Playlist)) {
+    const listName = info.title || "YouTube playlist";
+    pl = game.playlists.getName(listName) ?? await Playlist.create({ name: listName });
+  }
   const baseFolder = (opts.folder ?? game.settings.get(ID, "folder")).replace(/^\/+|\/+$/g, "");
-  const folder = `${baseFolder}/${info.title.replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 60) || "playlist"}`;
+  let sub = (info.title || "").replace(/[^\p{L}\p{N}._ -]+/gu, "_").slice(0, 60).replace(/^[. ]+|[. ]+$/g, "");
+  if (!sub || /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(sub)) sub = `playlist ${sub}`.trim();
+  const folder = `${baseFolder}/${sub}`;
+  if (info.truncated) ui.notifications.warn(t("YTA.Truncated"));
 
   const failed = [];
   let ok = 0, skipped = 0;
@@ -380,7 +392,7 @@ export async function importPlaylist(url, opts = {}) {
     if (opts.isCancelled?.()) break;
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
-    if (pl.sounds.some(s => s.description?.includes(e.id))) { skipped++; continue; }
+    if (pl.sounds.some(s => new RegExp(`[=/]${e.id}(?![\\w-])`).test(s.description ?? ""))) { skipped++; continue; }
     try {
       await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true, skipCheck: true });
       ok++;
