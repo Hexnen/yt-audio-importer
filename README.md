@@ -6,6 +6,7 @@ Import audio from YouTube directly into your Foundry assets and playlists.
 - **Right-click a playlist → "Paste from YouTube"**: takes the link from your clipboard and adds the track straight to that playlist.
 - The original link is saved in the sound's description.
 - Understands every common YouTube link shape (`watch`, `youtu.be`, `shorts`, `live`, `embed`, `music.`, `m.`, `youtube-nocookie`, tracking/time parameters, bare video IDs).
+- **Import sound** or **Import playlist**: the dialog detects from the link which applies (a video inside a playlist lets you choose). Playlists go into a Foundry playlist named after them, with a subfolder per playlist.
 - Formats: opus (default, best quality/size), ogg (Vorbis, plays everywhere), mp3, m4a.
 
 ## Install

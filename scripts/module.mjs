@@ -87,7 +87,8 @@ class YtImporter extends ApplicationV2 {
     wrap.className = "standard-form";
     wrap.innerHTML = `
       <div class="form-group"><label>${t("YTA.Url")}</label>
-        <div class="form-fields"><input type="text" name="url" placeholder="https://www.youtube.com/watch?v="></div></div>
+        <div class="form-fields"><input type="text" name="url" placeholder="https://www.youtube.com/watch?v= / playlist?list="></div></div>
+      <p class="yta-detect" style="font-size:11px;margin:0 0 4px 0;opacity:.8"></p>
       <div class="form-group"><label>${t("YTA.Set.Folder")}</label>
         <div class="form-fields"><file-picker name="folder" type="folder" value="${foundry.utils.escapeHTML(folder)}"></file-picker></div></div>
       <div class="form-group"><label>${t("YTA.Playlist")}</label>
@@ -95,22 +96,47 @@ class YtImporter extends ApplicationV2 {
       <div class="form-group"><label>${t("YTA.Set.Format")}</label>
         <div class="form-fields"><select name="format">${opts}</select></div></div>
       <div class="yta-progress" hidden>
+        <div class="yta-step" data-step="playlist" hidden style="margin:4px 0">
+          <label style="font-size:12px">${t("YTA.Step.Playlist")} <span class="yta-pct"></span></label>
+          <progress max="100" value="0" style="width:100%"></progress></div>
         <p class="yta-title" style="margin:6px 0;font-weight:bold"></p>
         ${bar("download", t("YTA.Step.Download"))}${bar("convert", t("YTA.Step.Convert"))}
         ${bar("transfer", t("YTA.Step.Transfer"))}${bar("upload", t("YTA.Step.Upload"))}
         <p class="yta-status" style="margin:6px 0"></p>
       </div>
       <p style="font-size:11px;margin:4px 0"><a href="${HELPER_URL}" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> ${t("YTA.GetHelper")}</a></p>
-      <footer class="form-footer"><button type="submit" class="yta-go"><i class="fa-solid fa-download"></i> ${t("YTA.Download")}</button></footer>`;
+      <footer class="form-footer">
+        <button type="button" class="yta-go" data-mode="sound" disabled><i class="fa-solid fa-music"></i> ${t("YTA.ImportSound")}</button>
+        <button type="button" class="yta-go" data-mode="playlist" disabled><i class="fa-solid fa-list"></i> ${t("YTA.ImportPlaylist")}</button>
+        <button type="button" class="yta-cancel" hidden><i class="fa-solid fa-stop"></i> ${t("YTA.Cancel")}</button>
+      </footer>`;
     return wrap;
   }
 
   _replaceHTML(result, content) {
     content.replaceChildren(result);
-    result.addEventListener("submit", ev => { ev.preventDefault(); this.#run(result); });
+    const input = result.elements.url;
+    const note = result.querySelector(".yta-detect");
+    const [soundBtn, listBtn] = result.querySelectorAll(".yta-go");
+    const update = () => {
+      const d = detectLink(input.value);
+      soundBtn.disabled = !d.video;
+      listBtn.disabled = !d.list;
+      soundBtn.classList.toggle("default", d.video && !d.list);
+      listBtn.classList.toggle("default", d.list && !d.video);
+      note.textContent = d.list && d.video ? t("YTA.Detect.Both") : d.list ? t("YTA.Detect.List") : d.video ? t("YTA.Detect.Video") : "";
+    };
+    input.addEventListener("input", update);
+    input.addEventListener("paste", () => setTimeout(update));
+    result.addEventListener("click", ev => {
+      const btn = ev.target.closest(".yta-go");
+      if (btn && !btn.disabled) this.#run(result, btn.dataset.mode);
+      if (ev.target.closest(".yta-cancel")) this.cancelled = true;
+    });
+    update();
   }
 
-  async #run(form) {
+  async #run(form, mode) {
     const url = form.elements.url.value.trim();
     if (!url) return;
     const folder = (form.elements.folder.value || "assets/youtube").replace(/^\/+|\/+$/g, "");
@@ -120,8 +146,9 @@ class YtImporter extends ApplicationV2 {
 
     const box = form.querySelector(".yta-progress");
     const status = box.querySelector(".yta-status");
-    const goBtn = form.querySelector(".yta-go");
-    const bars = Object.fromEntries(["download", "convert", "transfer", "upload"].map(k => {
+    const goBtns = form.querySelectorAll(".yta-go");
+    const cancelBtn = form.querySelector(".yta-cancel");
+    const bars = Object.fromEntries(["playlist", "download", "convert", "transfer", "upload"].map(k => {
       const el = box.querySelector(`[data-step=${k}]`);
       return [k, (v, indeterminate) => {
         const p = el.querySelector("progress");
@@ -129,23 +156,50 @@ class YtImporter extends ApplicationV2 {
         el.querySelector(".yta-pct").textContent = indeterminate ? "…" : `${Math.round(v)}%`;
       }];
     }));
+    const resetItem = () => ["download", "convert", "transfer", "upload"].forEach(k => bars[k](0));
+    const isList = mode === "playlist";
     box.hidden = false;
-    goBtn.disabled = true;
+    box.querySelector("[data-step=playlist]").hidden = !isList;
+    goBtns.forEach(b => (b.disabled = true));
+    cancelBtn.hidden = !isList;
+    this.cancelled = false;
     status.textContent = "";
+    resetItem();
+    const common = {
+      folder, format, playlist: form.elements.playlist.value,
+      onTitle: ti => (box.querySelector(".yta-title").textContent = ti),
+      onStep: (k, v, ind) => bars[k](v, ind)
+    };
     try {
-      const sound = await importAudio(url, {
-        folder, format, playlist: form.elements.playlist.value,
-        onTitle: ti => (box.querySelector(".yta-title").textContent = ti),
-        onStep: (k, v, ind) => bars[k](v, ind)
-      });
-      status.textContent = t("YTA.Done", { path: sound.path });
+      if (isList) {
+        const res = await importPlaylist(url, {
+          ...common, isCancelled: () => this.cancelled,
+          onItem: (i, n, title) => { resetItem(); bars.playlist((i - 1) / n * 100); box.querySelector(".yta-title").textContent = `${i}/${n} - ${title}`; }
+        });
+        bars.playlist(100);
+        status.textContent = t("YTA.PlaylistDone", { ok: res.ok, total: res.total, failed: res.failed.length, name: res.playlist.name });
+      } else {
+        const sound = await importAudio(url, common);
+        status.textContent = t("YTA.Done", { path: sound.path });
+      }
     } catch (err) {
       status.textContent = t("YTA.Err", { msg: err.message });
       if (err.noHelper) offerHelper();
     } finally {
-      goBtn.disabled = false;
+      cancelBtn.hidden = true;
+      form.elements.url.dispatchEvent(new Event("input"));
     }
   }
+}
+
+/** What does this text look like? { video, list } (client-side hint only; the helper is authoritative). */
+function detectLink(text) {
+  const s = String(text ?? "").trim();
+  if (!s) return { video: false, list: false };
+  if (/^[\w-]{11}$/.test(s)) return { video: true, list: false };
+  const list = /[?&]list=[\w-]{10,}/.test(s);
+  const video = /[?&]v=[\w-]{11}/.test(s) || /youtu\.be\/[\w-]{11}/.test(s) || /\/(shorts|live|embed|v|e|vi|video|watch)\/[\w-]{11}/.test(s);
+  return { video, list };
 }
 
 function noHelper(url) {
@@ -234,8 +288,45 @@ export async function importAudio(url, opts = {}) {
   const [sound] = await pl.createEmbeddedDocuments("PlaylistSound", [{
     name: name.replace(/\.[^.]+$/, ""), path, description: describe(link, meta)
   }]);
-  ui.notifications.info(t("YTA.Done", { path }));
+  if (!opts.quiet) ui.notifications.info(t("YTA.Done", { path }));
   return sound;
+}
+
+/**
+ * Import every video of a YouTube playlist into a Foundry playlist (new one named after it unless opts.playlist is given).
+ * Sequential; one failing video does not stop the rest.
+ */
+export async function importPlaylist(url, opts = {}) {
+  const helper = game.settings.get(ID, "helperUrl").replace(/\/$/, "");
+  let r;
+  try { r = await fetch(`${helper}/playlist?url=${encodeURIComponent(originalLink(url))}`); } catch { throw noHelper(helper); }
+  if (!r.ok) throw new Error(await r.text());
+  const info = await r.json();
+  if (!info.entries.length) throw new Error(t("YTA.EmptyPlaylist"));
+
+  let pl = opts.playlist;
+  if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
+  if (!(pl instanceof Playlist)) pl = game.playlists.getName(info.title) ?? await Playlist.create({ name: info.title });
+  const baseFolder = (opts.folder ?? game.settings.get(ID, "folder")).replace(/^\/+|\/+$/g, "");
+  const folder = `${baseFolder}/${info.title.replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 60) || "playlist"}`;
+
+  const failed = [];
+  let ok = 0;
+  const n = info.entries.length;
+  for (let i = 0; i < n; i++) {
+    if (opts.isCancelled?.()) break;
+    const e = info.entries[i];
+    opts.onItem?.(i + 1, n, e.title);
+    try {
+      await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true });
+      ok++;
+    } catch (err) {
+      if (err.noHelper) throw err;
+      failed.push({ title: e.title, error: err.message });
+    }
+  }
+  ui.notifications.info(t("YTA.PlaylistDone", { ok, total: n, failed: failed.length, name: pl.name }));
+  return { ok, total: n, failed, playlist: pl };
 }
 
 /** Right-click a playlist -> Paste from YouTube: clipboard link straight into that playlist. */
@@ -265,10 +356,13 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
       let title = "";
       const refresh = () => note?.update?.({ message: `${title || t("YTA.Working")}`, pct: Object.keys(pct).reduce((a, k) => a + pct[k] * W[k], 0) / 100 });
       try {
-        await importAudio(text, {
-          playlist, onTitle: x => { title = x; refresh(); },
-          onStep: (k, v, ind) => { if (!ind) pct[k] = v; refresh(); }
-        });
+        const cb = { playlist, onTitle: x => { title = x; refresh(); }, onStep: (k, v, ind) => { if (!ind) pct[k] = v; refresh(); } };
+        const d = detectLink(text);
+        if (d.list && !d.video) {
+          await importPlaylist(text, { ...cb, onItem: (i, n, ti) => { Object.keys(pct).forEach(k => (pct[k] = 0)); title = `${i}/${n} - ${ti}`; refresh(); } });
+        } else {
+          await importAudio(text, cb);
+        }
       } catch (err) {
         ui.notifications.error(t("YTA.Err", { msg: err.message }));
         if (err.noHelper) offerHelper();
@@ -280,4 +374,4 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
   });
 });
 
-Hooks.once("ready", () => { game.modules.get(ID).api = { importAudio, open: () => new YtImporter().render({ force: true }) }; });
+Hooks.once("ready", () => { game.modules.get(ID).api = { importAudio, importPlaylist, open: () => new YtImporter().render({ force: true }) }; });

@@ -24,3 +24,15 @@ export function resolveYouTube(input, depth = 0) {
   if (u.searchParams.get("list") && !id) throw new Error("Playlist links are not supported - paste a single video link");
   return u; // clips, etc. - let yt-dlp decide
 }
+
+/** Playlist link (any YouTube URL carrying ?list=) -> canonical playlist URL. */
+export function resolvePlaylist(input) {
+  let s = String(input ?? "").trim().replace(/^<|>$/g, "");
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`;
+  let u;
+  try { u = new URL(s); } catch { throw new Error("Not a valid link"); }
+  if (!HOST.test(u.hostname)) throw new Error("Only YouTube links are allowed");
+  const list = u.searchParams.get("list");
+  if (!list || !/^[\w-]{10,}$/.test(list)) throw new Error("No playlist found in this link");
+  return new URL(`https://www.youtube.com/playlist?list=${list}`);
+}

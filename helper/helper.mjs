@@ -9,9 +9,9 @@ import { join, basename, extname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { resolveYouTube } from "./yt-url.mjs";
+import { resolveYouTube, resolvePlaylist } from "./yt-url.mjs";
 
-const VERSION = "1.0.1";
+const VERSION = "1.1.0";
 const PORT = Number(process.env.YTA_PORT ?? 30077);
 const DIR = process.env.YTA_HOME ?? join(process.env.LOCALAPPDATA ?? tmpdir(), "yt-audio-helper");
 const BIN = join(DIR, "bin");
@@ -130,6 +130,28 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === "/" || u.pathname === "/health") {
     res.writeHead(200, { ...cors, "Content-Type": "application/json" });
     return res.end(JSON.stringify({ ok: true, name: "yt-audio-helper", version: VERSION }));
+  }
+
+  if (u.pathname === "/playlist") {
+    try {
+      const target = resolvePlaylist(u.searchParams.get("url"));
+      await ready();
+      const out = await new Promise((resolve, reject) => {
+        const p = spawn(YTDLP, ["--flat-playlist", "--dump-single-json", "--no-warnings", "--playlist-end", "300", "--", target.href], { windowsHide: true });
+        let o = "", e = "";
+        p.stdout.on("data", d => (o += d));
+        p.stderr.on("data", d => (e += d));
+        p.on("error", reject);
+        p.on("close", c => (c === 0 ? resolve(o) : reject(new Error(e.split("\n").filter(Boolean).pop() ?? `yt-dlp exit ${c}`))));
+      });
+      const j = JSON.parse(out);
+      const entries = (j.entries ?? []).filter(x => x?.id && /^[\w-]{11}$/.test(x.id)).map(x => ({ id: x.id, title: x.title ?? x.id }));
+      res.writeHead(200, { ...cors, "Content-Type": "application/json; charset=utf-8" });
+      return res.end(JSON.stringify({ title: j.title ?? "YouTube playlist", channel: j.channel ?? j.uploader ?? null, entries }));
+    } catch (e) {
+      res.writeHead(400, { ...cors, "Content-Type": "text/plain; charset=utf-8" });
+      return res.end(String(e.message));
+    }
   }
 
   if (req.method === "POST" && u.pathname === "/jobs") {
