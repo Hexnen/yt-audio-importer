@@ -52,7 +52,7 @@ Hooks.on("renderPlaylistDirectory", (app, html) => {
   btn.type = "button";
   btn.className = "yta-open";
   btn.innerHTML = `<i class="fa-brands fa-youtube"></i> ${t("YTA.Button")}`;
-  btn.addEventListener("click", () => new YtImporter().render({ force: true }));
+  btn.addEventListener("click", () => YtImporter.open());
   const header = root.querySelector(".directory-header .header-actions") ?? root.querySelector(".directory-header") ?? root;
   header.append(btn);
 });
@@ -106,6 +106,9 @@ class YtImporter extends ApplicationV2 {
     window: { title: "YTA.Title", icon: "fa-brands fa-youtube" },
     position: { width: 480, height: "auto" }
   };
+
+  /** One window at a time (fixed application id). */
+  static open() { return (this._inst ??= new YtImporter()).render({ force: true }); }
 
   async _renderHTML() {
     const fmt = game.settings.get(ID, "format");
@@ -416,4 +419,4 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
   });
 });
 
-Hooks.once("ready", () => { game.modules.get(ID).api = { importAudio, importPlaylist, open: () => new YtImporter().render({ force: true }) }; });
+Hooks.once("ready", () => { game.modules.get(ID).api = { importAudio, importPlaylist, open: () => YtImporter.open() }; });
