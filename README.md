@@ -13,7 +13,7 @@ Import audio from YouTube directly into your Foundry assets and playlists.
 1. In Foundry: **Add-on Modules → Install Module**, paste the manifest URL:
    `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/module.json`
 2. Enable the module in your world.
-3. Download **helper.exe** from the [latest release](https://github.com/Hexnen/yt-audio-importer/releases/latest) (the module also has a button for it) and run it. Keep its window open while you import; close it to stop. The first run downloads `yt-dlp` and `ffmpeg` automatically into `%LOCALAPPDATA%\yt-audio-helper`.
+3. Download **helper.exe** (also committed in this repo as [`helper/helper.exe`](helper/helper.exe)) from the [latest release](https://github.com/Hexnen/yt-audio-importer/releases/latest) (the module also has a button for it) and run it. Keep its window open while you import; close it to stop. The first run downloads `yt-dlp` and `ffmpeg` automatically into `%LOCALAPPDATA%\yt-audio-helper`.
 
 Foundry modules run only in the browser and cannot run `yt-dlp`, so a tiny local program (the helper) does the download; it listens on `127.0.0.1:30077` only and accepts YouTube links only. It must run on the same computer as the browser you use as GM.
 
