@@ -172,6 +172,18 @@ function originalLink(text) {
   return /^[\w-]{11}$/.test(s) ? `https://www.youtube.com/watch?v=${s}` : s;
 }
 
+/** Sound description (HTML): thumbnail, channel, clickable original link. */
+function describe(link, meta) {
+  const esc = foundry.utils.escapeHTML;
+  const safe = u => (/^https?:\/\//i.test(u ?? "") ? esc(u) : null);
+  const out = [];
+  if (safe(meta.thumbnail)) out.push(`<p><img src="${safe(meta.thumbnail)}" alt="${esc(meta.title ?? "")}" style="max-width:100%"></p>`);
+  if (meta.channel) out.push(`<p>${t("YTA.Channel")}: ${safe(meta.channelUrl) ? `<a href="${safe(meta.channelUrl)}" target="_blank" rel="noopener">${esc(meta.channel)}</a>` : esc(meta.channel)}</p>`);
+  const href = safe(link) ?? safe(meta.url);
+  out.push(href ? `<p><a href="${href}" target="_blank" rel="noopener">${href}</a></p>` : `<p>${esc(link)}</p>`);
+  return out.join("");
+}
+
 /**
  * Full pipeline: helper job -> file -> Foundry upload -> PlaylistSound (description = original link).
  * @param {string} url
@@ -191,6 +203,7 @@ export async function importAudio(url, opts = {}) {
   if (!r.ok) throw new Error(await r.text());
   const { id } = await r.json();
 
+  let meta = {};
   await new Promise((resolve, reject) => {
     const es = new EventSource(`${helper}/jobs/${id}/events`);
     es.onmessage = e => {
@@ -199,7 +212,7 @@ export async function importAudio(url, opts = {}) {
       if (d.stage === "download") step("download", d.percent);
       else if (d.stage === "setup") opts.onTitle?.(t("YTA.Setup"));
       else if (d.stage === "convert") { step("download", 100); step("convert", 0, true); }
-      else if (d.stage === "done") { step("download", 100); step("convert", 100); es.close(); resolve(); }
+      else if (d.stage === "done") { meta = d.meta ?? {}; step("download", 100); step("convert", 100); es.close(); resolve(); }
       else if (d.stage === "error") { es.close(); reject(new Error(d.message)); }
     };
     es.onerror = () => { es.close(); reject(noHelper(helper)); };
@@ -218,7 +231,7 @@ export async function importAudio(url, opts = {}) {
   if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
   if (!(pl instanceof Playlist)) pl = game.playlists.getName("YouTube") ?? await Playlist.create({ name: "YouTube" });
   const [sound] = await pl.createEmbeddedDocuments("PlaylistSound", [{
-    name: name.replace(/\.[^.]+$/, ""), path, description: link
+    name: name.replace(/\.[^.]+$/, ""), path, description: describe(link, meta)
   }]);
   ui.notifications.info(t("YTA.Done", { path }));
   return sound;

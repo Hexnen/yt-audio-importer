@@ -11,7 +11,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { resolveYouTube } from "./yt-url.mjs";
 
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 const PORT = Number(process.env.YTA_PORT ?? 30077);
 const DIR = process.env.YTA_HOME ?? join(process.env.LOCALAPPDATA ?? tmpdir(), "yt-audio-helper");
 const BIN = join(DIR, "bin");
@@ -80,6 +80,7 @@ function startJob(target, fmt) {
       await ready();
       job.dir = await mkdtemp(join(tmpdir(), "yta-"));
       const args = ["--no-playlist", "--newline", "-x", "--audio-format", FORMATS[fmt], "--audio-quality", fmt === "ogg" ? "5" : "0",
+        "--print-to-file", "%(.{title,channel,uploader,channel_url,uploader_url,thumbnail,webpage_url,id})j", join(job.dir, "meta.json"),
         ...(ffmpegDir ? ["--ffmpeg-location", ffmpegDir] : []),
         "-o", join(job.dir, "%(title).120B.%(ext)s"), "--", target.href];
       log(`job ${target.href} -> ${fmt}`);
@@ -95,10 +96,15 @@ function startJob(target, fmt) {
       p.stderr.on("data", d => (err += d));
       const code = await new Promise((res, rej) => { p.on("error", rej); p.on("close", res); });
       if (code !== 0) throw new Error(err.split("\n").filter(Boolean).pop() ?? `yt-dlp exit ${code}`);
-      const [file] = await readdir(job.dir);
+      const file = (await readdir(job.dir)).find(f => f !== "meta.json");
       if (!file) throw new Error("No output file");
       job.file = file;
-      emit(job, { stage: "done", percent: 100, title });
+      let meta = {};
+      try { meta = JSON.parse(await readFile(join(job.dir, "meta.json"), "utf8")); } catch { /* optional */ }
+      emit(job, { stage: "done", percent: 100, title, meta: {
+        title: meta.title, channel: meta.channel ?? meta.uploader, channelUrl: meta.channel_url ?? meta.uploader_url,
+        thumbnail: meta.thumbnail ?? (meta.id ? `https://i.ytimg.com/vi/${meta.id}/hqdefault.jpg` : null), url: meta.webpage_url
+      } });
     } catch (e) {
       log("job failed: " + e.message);
       emit(job, { stage: "error", message: String(e.message ?? e) });
