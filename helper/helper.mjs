@@ -11,7 +11,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { resolveYouTube, resolvePlaylist } from "./yt-url.mjs";
 
-const VERSION = "1.1.0";
+const VERSION = typeof __VERSION__ !== "undefined" ? __VERSION__ : "dev";
 const PORT = Number(process.env.YTA_PORT ?? 30077);
 const DIR = process.env.YTA_HOME ?? join(process.env.LOCALAPPDATA ?? tmpdir(), "yt-audio-helper");
 const BIN = join(DIR, "bin");

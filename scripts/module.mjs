@@ -1,6 +1,36 @@
 const ID = "yt-audio-importer";
 const { ApplicationV2 } = foundry.applications.api;
-const HELPER_URL = "https://github.com/Hexnen/yt-audio-importer/releases/latest/download/helper.exe";
+const HELPER_REQUIRED = "1.1.0"; // minimum helper version this module works with
+const HELPER_FILE = `foundry-yt-helper-v${HELPER_REQUIRED}.exe`;
+const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
+const cmpVer = (a, b) => {
+  const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+  return 0;
+};
+
+/** @returns {Promise<{state:"ok"|"outdated"|"missing", version?:string}>} */
+async function checkHelper() {
+  const helper = game.settings.get(ID, "helperUrl").replace(/\/$/, "");
+  let j;
+  try {
+    const r = await fetch(`${helper}/health`);
+    j = await r.json().catch(() => null);
+  } catch { return { state: "missing" }; }
+  if (!j?.version || j.version === "dev") return { state: j?.version === "dev" ? "ok" : "outdated", version: j?.version };
+  return { state: cmpVer(j.version, HELPER_REQUIRED) < 0 ? "outdated" : "ok", version: j.version };
+}
+
+/** Throws a noHelper error (missing or outdated) unless a compatible helper answers. */
+async function requireHelper() {
+  const c = await checkHelper();
+  if (c.state === "ok") return;
+  const url = game.settings.get(ID, "helperUrl");
+  const e = new Error(c.state === "outdated" ? t("YTA.Outdated", { found: c.version ?? "?", need: HELPER_REQUIRED }) : t("YTA.NoHelper", { url }));
+  e.noHelper = true;
+  e.outdated = c.state === "outdated";
+  throw e;
+}
 const FP = () => foundry.applications.apps.FilePicker.implementation;
 const t = (k, d) => (d ? game.i18n.format(k, d) : game.i18n.localize(k));
 const FORMATS = { ogg: "ogg (Vorbis) – works everywhere", opus: "opus – recommended (best quality, smallest)", mp3: "mp3", m4a: "m4a (aac)" };
@@ -104,7 +134,7 @@ class YtImporter extends ApplicationV2 {
         ${bar("transfer", t("YTA.Step.Transfer"))}${bar("upload", t("YTA.Step.Upload"))}
         <p class="yta-status" style="margin:6px 0"></p>
       </div>
-      <p style="font-size:11px;margin:4px 0"><a href="${HELPER_URL}" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> ${t("YTA.GetHelper")}</a></p>
+      <p class="yta-helper" style="font-size:11px;margin:4px 0"></p>
       <footer class="form-footer">
         <button type="button" class="yta-go" data-mode="sound" disabled><i class="fa-solid fa-music"></i> ${t("YTA.ImportSound")}</button>
         <button type="button" class="yta-go" data-mode="playlist" disabled><i class="fa-solid fa-list"></i> ${t("YTA.ImportPlaylist")}</button>
@@ -134,6 +164,13 @@ class YtImporter extends ApplicationV2 {
       if (ev.target.closest(".yta-cancel")) this.cancelled = true;
     });
     update();
+    const hs = result.querySelector(".yta-helper");
+    const link = `<a href="${HELPER_URL}" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> ${t("YTA.GetHelper")}</a>`;
+    checkHelper().then(c => {
+      hs.innerHTML = c.state === "ok" ? `<i class="fa-solid fa-circle-check"></i> ${t("YTA.Helper.Ok", { v: c.version })}`
+        : c.state === "outdated" ? `<i class="fa-solid fa-triangle-exclamation"></i> ${t("YTA.Helper.Outdated", { found: c.version ?? "?", need: HELPER_REQUIRED })} ${link}`
+        : `<i class="fa-solid fa-circle-xmark"></i> ${t("YTA.Helper.Missing")} ${link}`;
+    });
   }
 
   async #run(form, mode) {
@@ -184,7 +221,7 @@ class YtImporter extends ApplicationV2 {
       }
     } catch (err) {
       status.textContent = t("YTA.Err", { msg: err.message });
-      if (err.noHelper) offerHelper();
+      if (err.noHelper) offerHelper(err);
     } finally {
       cancelBtn.hidden = true;
       form.elements.url.dispatchEvent(new Event("input"));
@@ -209,10 +246,10 @@ function noHelper(url) {
 }
 
 /** Offer the helper download when it is not running. */
-async function offerHelper() {
+async function offerHelper(err) {
   const go = await foundry.applications.api.DialogV2.confirm({
-    window: { title: t("YTA.NoHelperTitle"), icon: "fa-solid fa-triangle-exclamation" },
-    content: `<p>${t("YTA.NoHelperBody")}</p>`,
+    window: { title: t(err?.outdated ? "YTA.OutdatedTitle" : "YTA.NoHelperTitle"), icon: "fa-solid fa-triangle-exclamation" },
+    content: `<p>${t(err?.outdated ? "YTA.OutdatedBody" : "YTA.NoHelperBody", { need: HELPER_REQUIRED })}</p>`,
     yes: { label: t("YTA.GetHelper"), icon: "fa-solid fa-download" },
     no: { label: t("YTA.Close") },
     rejectClose: false
@@ -250,6 +287,7 @@ export async function importAudio(url, opts = {}) {
   const format = opts.format ?? game.settings.get(ID, "format");
   const step = opts.onStep ?? (() => {});
   const link = originalLink(url);
+  if (!opts.skipCheck) await requireHelper();
 
   let r;
   try {
@@ -297,6 +335,7 @@ export async function importAudio(url, opts = {}) {
  * Sequential; one failing video does not stop the rest.
  */
 export async function importPlaylist(url, opts = {}) {
+  await requireHelper();
   const helper = game.settings.get(ID, "helperUrl").replace(/\/$/, "");
   let r;
   try { r = await fetch(`${helper}/playlist?url=${encodeURIComponent(originalLink(url))}`); } catch { throw noHelper(helper); }
@@ -318,7 +357,7 @@ export async function importPlaylist(url, opts = {}) {
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
     try {
-      await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true });
+      await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true, skipCheck: true });
       ok++;
     } catch (err) {
       if (err.noHelper) throw err;
@@ -365,7 +404,7 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
         }
       } catch (err) {
         ui.notifications.error(t("YTA.Err", { msg: err.message }));
-        if (err.noHelper) offerHelper();
+        if (err.noHelper) offerHelper(err);
       } finally {
         note?.update?.({ pct: 1 });
         setTimeout(() => ui.notifications.remove?.(note), 500);
