@@ -176,6 +176,7 @@ function originalLink(text) {
 function describe(link, meta) {
   const esc = foundry.utils.escapeHTML;
   const safe = u => (/^https?:\/\//i.test(u ?? "") ? esc(u) : null);
+  if (meta.thumbnail) meta = { ...meta, thumbnail: meta.thumbnail.split("?")[0] };
   const out = [];
   if (safe(meta.thumbnail)) out.push(`<p><img src="${safe(meta.thumbnail)}" alt="${esc(meta.title ?? "")}" style="max-width:100%"></p>`);
   if (meta.channel) out.push(`<p>${t("YTA.Channel")}: ${safe(meta.channelUrl) ? `<a href="${safe(meta.channelUrl)}" target="_blank" rel="noopener">${esc(meta.channel)}</a>` : esc(meta.channel)}</p>`);
