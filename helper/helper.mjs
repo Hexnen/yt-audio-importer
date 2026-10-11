@@ -188,7 +188,7 @@ const server = http.createServer(async (req, res) => {
 
   if (parts[2] === "file" && job.file) {
     const data = await readFile(join(job.dir, job.file));
-    const safe = job.file.replace(/[^\p{L}\p{N}._ -]+/gu, "_");
+    const safe = job.file.replace(/[^\p{L}\p{N}._ \-()\[\]',!&]+/gu, "_");
     res.writeHead(200, { ...cors, "Content-Type": MIME[job.fmt], "Content-Length": data.length, "X-Filename": encodeURIComponent(safe) });
     res.end(data);
     cleanup(job);

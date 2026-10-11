@@ -1,7 +1,7 @@
 const ID = "yt-audio-importer";
 const { ApplicationV2 } = foundry.applications.api;
 const HELPER_REQUIRED = "1.1.0"; // minimum helper version this module works with
-const HELPER_LATEST = "1.1.1";   // helper version attached to this module release (download link)
+const HELPER_LATEST = "1.1.2";   // helper version attached to this module release (download link)
 const HELPER_FILE = `foundry-yt-helper-v${HELPER_LATEST}.exe`;
 const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
 const cmpVer = (a, b) => {
