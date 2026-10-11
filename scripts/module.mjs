@@ -262,6 +262,23 @@ async function offerHelper(err) {
   if (go) window.open(HELPER_URL, "_blank", "noopener");
 }
 
+/** Same title, different video -> keep both: append [videoId] when the name is already taken in the folder. */
+async function uniqueName(folder, name, link) {
+  let listing;
+  try { listing = await FP().browse("data", folder); } catch { return name; }
+  const taken = new Set();
+  for (const f of listing.files ?? []) {
+    const b = f.split("/").pop();
+    taken.add(b.toLowerCase());
+    try { taken.add(decodeURIComponent(b).toLowerCase()); } catch { /* keep raw */ }
+  }
+  if (!taken.has(name.toLowerCase())) return name;
+  let vid = null;
+  try { vid = new URL(link).searchParams.get("v"); } catch { /* not a URL */ }
+  const dot = name.lastIndexOf(".");
+  return `${name.slice(0, dot)} [${vid ?? Date.now()}]${name.slice(dot)}`;   // same video again -> same suffixed name, overwrites its own copy
+}
+
 /** Original link as the user pasted it (a bare video ID becomes a watch URL). */
 function originalLink(text) {
   const s = text.trim();
@@ -321,7 +338,9 @@ export async function importAudio(url, opts = {}) {
   const name = decodeURIComponent(rawName ?? `youtube-${Date.now()}.${format}`);
   const file = new File([blob], name, { type: blob.type || "audio/ogg" });
   await ensureFolder(folder);
-  const up = await uploadWithProgress(file, folder, v => step("upload", v));
+  const fileName = await uniqueName(folder, name, meta.url ?? link);
+  const toUpload = fileName === name ? file : new File([blob], fileName, { type: file.type });
+  const up = await uploadWithProgress(toUpload, folder, v => step("upload", v));
   step("upload", 100);
   const path = up.path;
 
