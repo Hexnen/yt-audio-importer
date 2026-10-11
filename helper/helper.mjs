@@ -9,7 +9,7 @@ import { join, basename, extname, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { resolveYouTube, resolvePlaylist } from "./yt-url.mjs";
+import { resolveYouTube, resolvePlaylist, parseSpotify } from "./yt-url.mjs";
 
 const VERSION = typeof __VERSION__ !== "undefined" ? __VERSION__ : "dev";
 const PORT = Number(process.env.YTA_PORT ?? 30077);
@@ -63,6 +63,85 @@ let deps = null;
 const ready = () => (deps ??= ensureDeps().catch(e => { deps = null; throw e; }));
 ready().catch(e => log("setup failed: " + e.message));
 
+// ---------- Spotify (metadata only; the audio always comes from a matching YouTube video) ----------
+const SPOTIFY_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+
+async function spotifyEntity(type, id) {
+  const r = await fetch(`https://open.spotify.com/embed/${type}/${id}`, { headers: { "User-Agent": SPOTIFY_UA }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) throw new Error(`Spotify answered ${r.status} (private or removed ${type}?)`);
+  const m = (await r.text()).match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s);
+  let e = null;
+  try { e = JSON.parse(m[1]).props.pageProps.state.data.entity; } catch { /* handled below */ }
+  if (!e) throw new Error("Could not read this Spotify link (the Spotify page format may have changed)");
+  return e;
+}
+
+async function spotifyCover(type, id) {
+  try {
+    const r = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/${type}/${id}`)}`, { signal: AbortSignal.timeout(10000) });
+    return (await r.json()).thumbnail_url ?? null;
+  } catch { return null; }
+}
+
+/** yt-dlp flat JSON for a search/playlist query. */
+const ytJson = query => new Promise((resolve, reject) => {
+  const p = spawn(YTDLP, ["--flat-playlist", "--dump-single-json", "--no-warnings", "--", query], { windowsHide: true });
+  let o = "", e = "";
+  p.stdout.on("data", d => (o += d));
+  p.stderr.on("data", d => (e += d));
+  p.on("error", reject);
+  p.on("close", c => { try { c === 0 ? resolve(JSON.parse(o)) : reject(new Error(lastError(e) ?? `yt-dlp exit ${c}`)); } catch (x) { reject(x); } });
+});
+
+const BAD_VERSION = /\b(live|cover|karaoke|instrumental|remix|slowed|sped up|reverb|8d|nightcore|reaction|tutorial)\b/;
+
+/** Best YouTube video for a Spotify track: duration must match first, then title/channel/version hints. */
+async function matchYouTube({ title, artists, durationMs }) {
+  const j = await ytJson(`ytsearch10:${artists.join(" ")} ${title}`);
+  const wanted = title.toLowerCase();
+  const core = wanted.split(/ [-(\[]/)[0].trim();
+  let best = null;
+  for (const e of j.entries ?? []) {
+    if (!e?.id || !/^[\w-]{11}$/.test(e.id)) continue;
+    let score = 0;
+    const secs = Number(e.duration);
+    if (durationMs && secs) { const d = Math.abs(secs * 1000 - durationMs) / 1000; score += d <= 4 ? d : 40 + d; } else score += 25;
+    const yt = (e.title ?? "").toLowerCase();
+    if (core.length >= 3 && !yt.includes(core)) score += 50;
+    const bad = yt.match(BAD_VERSION);
+    if (bad && !wanted.includes(bad[0])) score += 30;
+    const ch = (e.channel ?? e.uploader ?? "").toLowerCase();
+    if (/- topic$/.test(ch) || artists.some(a => a && ch.includes(a.toLowerCase()))) score -= 3;
+    if (!best || score < best.score) best = { id: e.id, score };
+  }
+  if (!best) throw new Error("No matching video found on YouTube");
+  return { ...best, approx: best.score >= 40 };
+}
+
+async function resolveSpotifyTrack(sp) {
+  const [e, cover] = await Promise.all([spotifyEntity("track", sp.id), spotifyCover("track", sp.id)]);
+  const title = e.title ?? e.name;
+  if (!title) throw new Error("Could not read the track name from Spotify");
+  const artists = (e.artists ?? []).map(a => a.name).filter(Boolean);
+  const m = await matchYouTube({ title, artists: artists.length ? artists : [""], durationMs: e.duration });
+  log(`spotify ${sp.id}: "${artists.join(", ")} - ${title}" -> youtube ${m.id} (score ${m.score.toFixed(1)})`);
+  return {
+    target: new URL(`https://www.youtube.com/watch?v=${m.id}`),
+    info: { label: artists.length ? `${artists.join(", ")} - ${title}` : title, title, artists, cover, url: `https://open.spotify.com/track/${sp.id}`, approx: m.approx }
+  };
+}
+
+/** Album / playlist -> the same shape as the YouTube /playlist endpoint (entries carry their own url). */
+async function spotifyList(sp) {
+  const e = await spotifyEntity(sp.type, sp.id);
+  const entries = (e.trackList ?? []).map(x => {
+    const id = String(x.uri ?? "").split(":")[2];
+    return id && /^[A-Za-z0-9]{22}$/.test(id)
+      ? { id, title: `${x.subtitle ? `${x.subtitle} - ` : ""}${x.title}`, url: `https://open.spotify.com/track/${id}` } : null;
+  }).filter(Boolean);
+  return { title: e.name || e.title || "Spotify", channel: null, entries, truncated: false, spotify: true };
+}
+
 // ---------- server ----------
 const FORMATS = { mp3: "mp3", ogg: "vorbis", m4a: "m4a", opus: "opus" };
 const MIME = { mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", opus: "audio/ogg" };
@@ -84,7 +163,7 @@ function emit(job, ev) {
   }
 }
 
-function startJob(target, fmt) {
+function startJob(target, fmt, spotify = null) {
   const job = { id: randomUUID(), clients: new Set(), last: { stage: "starting", percent: 0 }, dir: null, file: null, fmt };
   jobs.set(job.id, job);
   (async () => {
@@ -92,6 +171,12 @@ function startJob(target, fmt) {
       emit(job, { stage: "setup" });
       await ready();
       if (!jobs.has(job.id)) return;
+      if (spotify) {                       // Spotify track: find the matching YouTube video first
+        emit(job, { stage: "resolve" });
+        const r = await resolveSpotifyTrack(spotify);
+        job.spotify = r.info;
+        target = r.target;
+      }
       job.dir = await mkdtemp(join(tmpdir(), "yta-"));
       const esc = p => p.replace(/%/g, "%%");   // yt-dlp treats the path as an output template
       const args = ["--no-playlist", "--playlist-items", "1", "--newline", "-x", "--audio-format", FORMATS[fmt], "--audio-quality", fmt === "ogg" ? "5" : "0",
@@ -118,10 +203,14 @@ function startJob(target, fmt) {
       let meta = {};
       try { meta = JSON.parse(await readFile(join(job.dir, "meta.json"), "utf8")); } catch { /* optional */ }
       job.metaId = meta.id;
-      emit(job, { stage: "done", percent: 100, title, meta: {
+      const yt = {
         title: meta.title, channel: meta.channel ?? meta.uploader, channelUrl: meta.channel_url ?? meta.uploader_url,
         thumbnail: meta.thumbnail ?? (meta.id ? `https://i.ytimg.com/vi/${meta.id}/hqdefault.jpg` : null), url: meta.webpage_url
-      } });
+      };
+      const sp = job.spotify;
+      emit(job, { stage: "done", percent: 100, title: sp?.label ?? title, meta: sp
+        ? { title: sp.label, channel: sp.artists.join(", ") || null, channelUrl: null, thumbnail: sp.cover ?? yt.thumbnail, url: sp.url, matchedUrl: yt.url, approx: sp.approx }
+        : yt });
     } catch (e) {
       log("job failed: " + e.message);
       emit(job, { stage: "error", message: String(e.message ?? e) });
@@ -163,6 +252,12 @@ const handle = async (req, res) => {
 
   if (u.pathname === "/playlist") {
     try {
+      const sp = parseSpotify(u.searchParams.get("url"));
+      if (sp) {
+        if (sp.type === "track") throw new Error("This is a single Spotify track - use Import sound");
+        res.writeHead(200, { ...cors, "Content-Type": "application/json; charset=utf-8" });
+        return res.end(JSON.stringify(await spotifyList(sp)));
+      }
       const target = resolvePlaylist(u.searchParams.get("url"));
       await ready();
       const out = await new Promise((resolve, reject) => {
@@ -185,12 +280,15 @@ const handle = async (req, res) => {
 
   if (req.method === "POST" && u.pathname === "/jobs") {
     try {
-      const target = resolveYouTube(u.searchParams.get("url"));
+      const rawUrl = u.searchParams.get("url");
+      const sp = parseSpotify(rawUrl);
+      if (sp && sp.type !== "track") throw new Error("Spotify albums and playlists: use Import playlist");
+      const target = sp ? null : resolveYouTube(rawUrl);
       const fmt = u.searchParams.get("format") ?? "opus";
       if (!FORMATS[fmt]) throw new Error("Bad format");
       const running = [...jobs.values()].filter(j => !["done", "error"].includes(j.last.stage)).length;
       if (running >= 3 || jobs.size >= 25) { res.writeHead(429, { ...cors, "Content-Type": "text/plain; charset=utf-8" }); return res.end("Helper is busy - try again in a moment"); }
-      const job = startJob(target, fmt);
+      const job = startJob(target, fmt, sp);
       res.writeHead(200, { ...cors, "Content-Type": "application/json" });
       return res.end(JSON.stringify({ id: job.id }));
     } catch (e) {
@@ -213,7 +311,7 @@ const handle = async (req, res) => {
 
   if (parts[2] === "file" && job.file) {
     const data = await readFile(join(job.dir, job.file));
-    let safe = job.file.replace(/[^\p{L}\p{N}._ \-()\[\]',!&]+/gu, "_");
+    let safe = (job.spotify ? `${job.spotify.label.slice(0, 120)}${extname(job.file)}` : job.file).replace(/[^\p{L}\p{N}._ \-()\[\]',!&]+/gu, "_");
     if (!/[\p{L}\p{N}]/u.test(safe.replace(/\.[^.]*$/, ""))) safe = `${job.metaId ?? "audio"}${extname(job.file)}`;   // emoji-only titles
     res.once("finish", () => cleanup(job));
     res.writeHead(200, { ...cors, "Content-Type": MIME[job.fmt], "Content-Length": data.length, "X-Filename": encodeURIComponent(safe) });

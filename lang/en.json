@@ -42,5 +42,9 @@
   "YTA.Helper.Ok": "Helper v{v} is running.",
   "YTA.Helper.Missing": "Helper is not running.",
   "YTA.Helper.Outdated": "Helper {found} is outdated (need {need}).",
-  "YTA.Truncated": "This playlist has more than 300 videos; only the first 300 are imported."
+  "YTA.Truncated": "This playlist has more than 300 videos; only the first 300 are imported.",
+  "YTA.Detect.Spotify": "Spotify link: the audio is taken from the matching YouTube video.",
+  "YTA.Resolving": "Finding the track on YouTube…",
+  "YTA.MatchedOn": "Audio from",
+  "YTA.Approx": "approximate match - check it"
 }

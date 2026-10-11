@@ -37,3 +37,15 @@ export function resolvePlaylist(input) {
   if (!list || !/^[\w-]{10,}$/.test(list)) throw new Error("No playlist found in this link");
   return new URL(`https://www.youtube.com/playlist?list=${list}`);
 }
+
+/** Spotify track/album/playlist link or URI -> { type, id }, else null. */
+export function parseSpotify(input) {
+  const s = String(input ?? "").trim().replace(/^<|>$/g, "");
+  let m = s.match(/^spotify:(track|album|playlist):([A-Za-z0-9]{22})$/);
+  if (m) return { type: m[1], id: m[2] };
+  let u;
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`); } catch { return null; }
+  if (!/^(open\.)?spotify\.com$/i.test(u.hostname)) return null;
+  m = u.pathname.match(/\/(track|album|playlist)\/([A-Za-z0-9]{22})(?![A-Za-z0-9])/);   // tolerates /intl-xx/ prefixes
+  return m ? { type: m[1], id: m[2] } : null;
+}

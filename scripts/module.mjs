@@ -1,7 +1,7 @@
 const ID = "yt-audio-importer";
 const { ApplicationV2 } = foundry.applications.api;
-const HELPER_REQUIRED = "1.1.0"; // minimum helper version this module works with
-const HELPER_LATEST = "1.1.3";   // helper version attached to this module release (download link)
+const HELPER_REQUIRED = "1.2.0"; // minimum helper version this module works with
+const HELPER_LATEST = "1.2.0";   // helper version attached to this module release (download link)
 const HELPER_FILE = `foundry-yt-helper-v${HELPER_LATEST}.exe`;
 const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
 const cmpVer = (a, b) => {
@@ -162,7 +162,7 @@ class YtImporter extends ApplicationV2 {
       listBtn.disabled = !d.list || this.#busy;
       soundBtn.classList.toggle("default", d.video && !d.list);
       listBtn.classList.toggle("default", d.list && !d.video);
-      note.textContent = d.list && d.video ? t("YTA.Detect.Both") : d.list ? t("YTA.Detect.List") : d.video ? t("YTA.Detect.Video") : "";
+      note.textContent = (d.spotify ? `${t("YTA.Detect.Spotify")} ` : "") + (d.list && d.video ? t("YTA.Detect.Both") : d.list ? t("YTA.Detect.List") : d.video ? t("YTA.Detect.Video") : "");
     };
     input.addEventListener("input", update);
     input.addEventListener("paste", () => setTimeout(update));
@@ -243,6 +243,8 @@ class YtImporter extends ApplicationV2 {
 function detectLink(text) {
   const s = String(text ?? "").trim();
   if (!s) return { video: false, list: false };
+  const sp = s.match(/(?:open\.spotify\.com\/(?:intl-[a-z-]+\/)?|^spotify:)(track|album|playlist)[/:]([A-Za-z0-9]{22})/i);
+  if (sp) return { video: sp[1].toLowerCase() === "track", list: sp[1].toLowerCase() !== "track", spotify: true };
   if (/^[\w-]{11}$/.test(s)) return { video: true, list: false };
   const list = /[?&]list=[\w-]{10,}/.test(s);
   const known = /[?&]v=[\w-]{11}/.test(s) || /youtu\.be\/[\w-]{11}/.test(s) || /\/(shorts|live|embed|v|e|vi|video|watch)\/[\w-]{11}/.test(s);
@@ -280,7 +282,7 @@ async function uniqueName(folder, name, link) {
   }
   if (!taken.has(name.toLowerCase())) return name;
   let vid = null;
-  try { vid = new URL(link).searchParams.get("v"); } catch { /* not a URL */ }
+  try { const u = new URL(link); vid = u.searchParams.get("v") ?? (/spotify\.com$/i.test(u.hostname) ? u.pathname.split("/").pop() : null); } catch { /* not a URL */ }
   const dot = name.lastIndexOf(".");
   return `${name.slice(0, dot)} [${vid ?? Date.now()}]${name.slice(dot)}`;   // same video again -> same suffixed name, overwrites its own copy
 }
@@ -299,6 +301,7 @@ function describe(link, meta) {
   const out = [];
   if (safe(meta.thumbnail)) out.push(`<p><img src="${safe(meta.thumbnail)}" alt="${esc(meta.title ?? "")}" style="max-width:100%"></p>`);
   if (meta.channel) out.push(`<p>${t("YTA.Channel")}: ${safe(meta.channelUrl) ? `<a href="${safe(meta.channelUrl)}" target="_blank" rel="noopener">${esc(meta.channel)}</a>` : esc(meta.channel)}</p>`);
+  if (safe(meta.matchedUrl)) out.push(`<p>${t("YTA.MatchedOn")}: <a href="${safe(meta.matchedUrl)}" target="_blank" rel="noopener">${safe(meta.matchedUrl)}</a>${meta.approx ? ` (${t("YTA.Approx")})` : ""}</p>`);
   const href = safe(link) ?? safe(meta.url);
   out.push(href ? `<p><a href="${href}" target="_blank" rel="noopener">${href}</a></p>` : `<p>${esc(link)}</p>`);
   return out.join("");
@@ -332,6 +335,7 @@ export async function importAudio(url, opts = {}) {
       if (d.title) opts.onTitle?.(d.title);
       if (d.stage === "download") step("download", d.percent);
       else if (d.stage === "setup") opts.onTitle?.(t("YTA.Setup"));
+      else if (d.stage === "resolve") opts.onTitle?.(t("YTA.Resolving"));
       else if (d.stage === "convert") { step("download", 100); step("convert", 0, true); }
       else if (d.stage === "done") { meta = d.meta ?? {}; step("download", 100); step("convert", 100); es.close(); resolve(); }
       else if (d.stage === "error") { es.close(); reject(new Error(d.message)); }
@@ -394,7 +398,7 @@ export async function importPlaylist(url, opts = {}) {
     opts.onItem?.(i + 1, n, e.title);
     if (pl.sounds.some(s => new RegExp(`[=/]${e.id}(?![\\w-])`).test(s.description ?? ""))) { skipped++; continue; }
     try {
-      await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true, skipCheck: true });
+      await importAudio(e.url ?? `https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true, skipCheck: true });
       ok++;
     } catch (err) {
       if (err.noHelper) throw err;
