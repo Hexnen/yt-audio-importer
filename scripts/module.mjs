@@ -1,7 +1,8 @@
 const ID = "yt-audio-importer";
 const { ApplicationV2 } = foundry.applications.api;
 const HELPER_REQUIRED = "1.1.0"; // minimum helper version this module works with
-const HELPER_FILE = `foundry-yt-helper-v${HELPER_REQUIRED}.exe`;
+const HELPER_LATEST = "1.1.1";   // helper version attached to this module release (download link)
+const HELPER_FILE = `foundry-yt-helper-v${HELPER_LATEST}.exe`;
 const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
 const cmpVer = (a, b) => {
   const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
@@ -78,7 +79,7 @@ function uploadWithProgress(file, target, onProgress) {
     xhr.onload = () => {
       try {
         const r = JSON.parse(xhr.responseText);
-        if (xhr.status >= 400 || r.status === "error") return reject(new Error(r.message ?? xhr.statusText));
+        if (xhr.status >= 400 || r.error || !r.path) return reject(new Error(r.error ?? r.message ?? xhr.statusText ?? "Upload failed"));
         resolve(r);
       } catch { reject(new Error(xhr.statusText || "Upload failed")); }
     };
@@ -214,7 +215,7 @@ class YtImporter extends ApplicationV2 {
           onItem: (i, n, title) => { resetItem(); bars.playlist((i - 1) / n * 100); box.querySelector(".yta-title").textContent = `${i}/${n} - ${title}`; }
         });
         bars.playlist(100);
-        status.textContent = t("YTA.PlaylistDone", { ok: res.ok, total: res.total, failed: res.failed.length, name: res.playlist.name });
+        status.textContent = t("YTA.PlaylistDone", { ok: res.ok, total: res.total, failed: res.failed.length, skipped: res.skipped, name: res.playlist.name });
       } else {
         const sound = await importAudio(url, common);
         status.textContent = t("YTA.Done", { path: sound.path });
@@ -235,8 +236,9 @@ function detectLink(text) {
   if (!s) return { video: false, list: false };
   if (/^[\w-]{11}$/.test(s)) return { video: true, list: false };
   const list = /[?&]list=[\w-]{10,}/.test(s);
-  const video = /[?&]v=[\w-]{11}/.test(s) || /youtu\.be\/[\w-]{11}/.test(s) || /\/(shorts|live|embed|v|e|vi|video|watch)\/[\w-]{11}/.test(s);
-  return { video, list };
+  const known = /[?&]v=[\w-]{11}/.test(s) || /youtu\.be\/[\w-]{11}/.test(s) || /\/(shorts|live|embed|v|e|vi|video|watch)\/[\w-]{11}/.test(s);
+  const other = !list && /(^|\/\/|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be)\/./i.test(s) && !/\/(channel|c|user|@)/i.test(s); // e.g. /clip/..., helper decides
+  return { video: known || other, list };
 }
 
 function noHelper(url) {
@@ -318,7 +320,7 @@ export async function importAudio(url, opts = {}) {
   await ensureFolder(folder);
   const up = await uploadWithProgress(file, folder, v => step("upload", v));
   step("upload", 100);
-  const path = up?.path ?? `${folder}/${name}`;
+  const path = up.path;
 
   let pl = opts.playlist;
   if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
@@ -350,12 +352,13 @@ export async function importPlaylist(url, opts = {}) {
   const folder = `${baseFolder}/${info.title.replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 60) || "playlist"}`;
 
   const failed = [];
-  let ok = 0;
+  let ok = 0, skipped = 0;
   const n = info.entries.length;
   for (let i = 0; i < n; i++) {
     if (opts.isCancelled?.()) break;
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
+    if (pl.sounds.some(s => s.description?.includes(e.id))) { skipped++; continue; }
     try {
       await importAudio(`https://www.youtube.com/watch?v=${e.id}`, { ...opts, folder, playlist: pl, quiet: true, skipCheck: true });
       ok++;
@@ -364,8 +367,8 @@ export async function importPlaylist(url, opts = {}) {
       failed.push({ title: e.title, error: err.message });
     }
   }
-  ui.notifications.info(t("YTA.PlaylistDone", { ok, total: n, failed: failed.length, name: pl.name }));
-  return { ok, total: n, failed, playlist: pl };
+  ui.notifications.info(t("YTA.PlaylistDone", { ok, total: n, failed: failed.length, skipped, name: pl.name }));
+  return { ok, total: n, failed, skipped, playlist: pl };
 }
 
 /** Right-click a playlist -> Paste from YouTube: clipboard link straight into that playlist. */

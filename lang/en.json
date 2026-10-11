@@ -8,7 +8,7 @@
   "YTA.Detect.List": "Playlist link detected - every video will be imported into its own Foundry playlist.",
   "YTA.Detect.Both": "Video inside a playlist: choose a single sound or the whole playlist.",
   "YTA.EmptyPlaylist": "No importable videos in this playlist.",
-  "YTA.PlaylistDone": "Playlist {name}: {ok}/{total} imported, {failed} failed.",
+  "YTA.PlaylistDone": "Playlist {name}: {ok}/{total} imported, {skipped} already there, {failed} failed.",
   "YTA.Paste": "Paste from YouTube",
   "YTA.Playlist": "Playlist",
   "YTA.Auto": "auto-created",

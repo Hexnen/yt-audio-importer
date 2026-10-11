@@ -29,12 +29,18 @@ async function download(url, dest) {
   if (!r.ok) throw new Error(`Download failed (${r.status}): ${url}`);
   await pipeline(Readable.fromWeb(r.body), createWriteStream(dest));
 }
+const run = (exe, args, timeout) => new Promise(resolve => {
+  const p = spawn(exe, args, { windowsHide: true, stdio: "ignore" });
+  const timer = setTimeout(() => p.kill(), timeout);
+  p.on("error", () => { clearTimeout(timer); resolve(); });
+  p.on("close", () => { clearTimeout(timer); resolve(); });
+});
 const has = exe => spawnSync("where", [exe], { windowsHide: true }).status === 0;
 let ffmpegDir = null;
 
 async function ensureDeps() {
   if (!existsSync(YTDLP)) await download(YTDLP_URL, YTDLP);
-  else { log("updating yt-dlp"); spawnSync(YTDLP, ["-U"], { windowsHide: true, timeout: 120000 }); } // YouTube breaks old versions often
+  else { log("updating yt-dlp"); await run(YTDLP, ["-U"], 120000); } // YouTube breaks old versions often
   if (existsSync(join(BIN, "ffmpeg.exe"))) ffmpegDir = BIN;
   else if (has("ffmpeg") && has("ffprobe")) ffmpegDir = null;
   else {
