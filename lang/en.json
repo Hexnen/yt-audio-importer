@@ -13,6 +13,7 @@
   "YTA.Playlist": "Playlist",
   "YTA.Auto": "auto-created",
   "YTA.NoPlaylist": "No playlist (file only)",
+  "YTA.PackLocked": "The compendium {pack} is locked. Unlock it before importing into its playlist.",
   "YTA.PlaylistMissing": "The chosen playlist no longer exists. Reopen the import window and pick another.",
   "YTA.Working": "Downloading from YouTube…",
   "YTA.Button": "Import from YouTube",

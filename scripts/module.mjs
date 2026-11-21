@@ -330,6 +330,8 @@ function playlistGone(pl) {
 function resolvePlaylist(pl) {
   if (pl instanceof Playlist) {   // a document handed in directly (context menu, playlist loop) may have been deleted meanwhile
     if (playlistGone(pl)) throw new Error(t("YTA.PlaylistMissing"));
+    // Compendium playlist (API callers): a locked pack rejects the new sound only after the download and upload, leaving an orphan file.
+    if (pl.pack && (game.packs.get(pl.pack)?.locked ?? true)) throw new Error(t("YTA.PackLocked", { pack: pl.pack }));
     return pl;
   }
   if (typeof pl !== "string" || !pl) return pl;
@@ -433,7 +435,7 @@ export async function importPlaylist(url, opts = {}) {
   const n = info.entries.length;
   for (let i = 0; i < n; i++) {
     if (opts.isCancelled?.()) break;
-    if (playlistGone(pl)) throw new Error(t("YTA.PlaylistMissing"));   // deleted mid-import: stop instead of downloading the rest into orphan files
+    resolvePlaylist(pl);   // deleted (or its compendium locked) mid-import: stop instead of downloading the rest into orphan files
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
     if (pl.sounds.some(s => new RegExp(`[=/]${e.id}(?![\\w-])`).test(s.description ?? ""))) { skipped++; continue; }
