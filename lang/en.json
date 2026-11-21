@@ -13,6 +13,7 @@
   "YTA.Playlist": "Playlist",
   "YTA.Auto": "auto-created",
   "YTA.NoPlaylist": "No playlist (file only)",
+  "YTA.PlaylistMissing": "The chosen playlist no longer exists. Reopen the import window and pick another.",
   "YTA.Working": "Downloading from YouTube…",
   "YTA.Button": "Import from YouTube",
   "YTA.Title": "Import audio from YouTube",

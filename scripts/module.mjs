@@ -321,6 +321,14 @@ function describe(link, meta) {
   return out.join("");
 }
 
+/** Playlist id -> document. An explicit id that no longer exists (deleted meanwhile) is an error, not a silent fallback. */
+function resolvePlaylist(pl) {
+  if (typeof pl !== "string" || !pl) return pl;
+  const doc = game.playlists.get(pl);
+  if (!doc) throw new Error(t("YTA.PlaylistMissing"));
+  return doc;
+}
+
 /**
  * Full pipeline: helper job -> file -> Foundry upload -> PlaylistSound (description = original link).
  * @param {string} url
@@ -333,6 +341,7 @@ export async function importAudio(url, opts = {}) {
   const format = opts.format ?? game.settings.get(ID, "format");
   const step = opts.onStep ?? (() => {});
   const link = originalLink(url);
+  let pl = resolvePlaylist(opts.playlist);
   if (!opts.skipCheck) await requireHelper();
 
   let r;
@@ -370,8 +379,6 @@ export async function importAudio(url, opts = {}) {
   step("upload", 100);
   const path = up.path;
 
-  let pl = opts.playlist;
-  if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
   if (!(pl instanceof Playlist)) {
     // No playlist chosen and "Add to a playlist after import" is off: keep just the file.
     if (!game.settings.get(ID, "addToPlaylist")) {
@@ -392,6 +399,7 @@ export async function importAudio(url, opts = {}) {
  * Sequential; one failing video does not stop the rest.
  */
 export async function importPlaylist(url, opts = {}) {
+  let pl = resolvePlaylist(opts.playlist);
   await requireHelper();
   const helper = game.settings.get(ID, "helperUrl").replace(/\/$/, "");
   let r;
@@ -400,8 +408,6 @@ export async function importPlaylist(url, opts = {}) {
   const info = await r.json();
   if (!info.entries.length) throw new Error(t("YTA.EmptyPlaylist"));
 
-  let pl = opts.playlist;
-  if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
   if (!(pl instanceof Playlist)) {
     const listName = info.title || "YouTube playlist";
     pl = game.playlists.getName(listName) ?? await Playlist.create({ name: listName });
