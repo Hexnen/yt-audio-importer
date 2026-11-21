@@ -3,7 +3,8 @@ const { ApplicationV2 } = foundry.applications.api;
 const HELPER_REQUIRED = "1.2.0"; // minimum helper version this module works with
 const HELPER_LATEST = "1.2.0";   // helper version attached to this module release (download link)
 const HELPER_FILE = `foundry-yt-helper-v${HELPER_LATEST}.exe`;
-const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/latest/download/${HELPER_FILE}`;
+const HELPER_RELEASE = "v1.2.0";  // release tag that has HELPER_FILE attached (later module releases do not carry the exe)
+const HELPER_URL = `https://github.com/Hexnen/yt-audio-importer/releases/download/${HELPER_RELEASE}/${HELPER_FILE}`;
 const cmpVer = (a, b) => {
   const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
   for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
