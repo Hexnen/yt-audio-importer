@@ -160,6 +160,10 @@ function emit(job, ev) {
     clearTimeout(job.timer);
     job.timer = setTimeout(() => cleanup(job), 15 * 60 * 1000);   // keep the result 15 min after it is ready
     job.timer.unref();
+    if (ev.stage === "error" && job.dir) {   // nothing to fetch: drop partial downloads now, keep only the message for late SSE clients
+      rm(job.dir, { recursive: true, force: true }).catch(() => {});
+      job.dir = null;
+    }
   }
 }
 
@@ -286,8 +290,9 @@ const handle = async (req, res) => {
       const target = sp ? null : resolveYouTube(rawUrl);
       const fmt = u.searchParams.get("format") ?? "opus";
       if (!FORMATS[fmt]) throw new Error("Bad format");
-      const running = [...jobs.values()].filter(j => !["done", "error"].includes(j.last.stage)).length;
-      if (running >= 3 || jobs.size >= 25) { res.writeHead(429, { ...cors, "Content-Type": "text/plain; charset=utf-8" }); return res.end("Helper is busy - try again in a moment"); }
+      const live = [...jobs.values()].filter(j => j.last.stage !== "error");   // failed jobs hold no file: they must not fill the cap (a playlist with 25+ unavailable videos)
+      const running = live.filter(j => j.last.stage !== "done").length;
+      if (running >= 3 || live.length >= 25) { res.writeHead(429, { ...cors, "Content-Type": "text/plain; charset=utf-8" }); return res.end("Helper is busy - try again in a moment"); }
       const job = startJob(target, fmt, sp);
       res.writeHead(200, { ...cors, "Content-Type": "application/json" });
       return res.end(JSON.stringify({ id: job.id }));
