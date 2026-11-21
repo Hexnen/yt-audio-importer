@@ -112,7 +112,16 @@ class YtImporter extends ApplicationV2 {
   };
 
   /** One window at a time (fixed application id). */
-  static open() { return (this._inst ??= new YtImporter()).render({ force: true }); }
+  static open() {
+    const app = (this._inst ??= new YtImporter());
+    // Already open: just raise it. A re-render would swap the form mid-import (progress lost, buttons stuck disabled).
+    if (app.rendered) {
+      if (app.minimized) app.maximize();
+      app.bringToFront();
+      return app;
+    }
+    return app.render({ force: true });
+  }
 
   async _renderHTML() {
     const fmt = game.settings.get(ID, "format");
@@ -130,7 +139,7 @@ class YtImporter extends ApplicationV2 {
       <div class="form-group"><label>${t("YTA.Set.Folder")}</label>
         <div class="form-fields"><file-picker name="folder" type="folder" value="${foundry.utils.escapeHTML(folder)}"></file-picker></div></div>
       <div class="form-group"><label>${t("YTA.Playlist")}</label>
-        <div class="form-fields"><select name="playlist"><option value="">YouTube (${t("YTA.Auto")})</option>${game.playlists.map(p => `<option value="${p.id}">${foundry.utils.escapeHTML(p.name)}</option>`).join("")}</select></div></div>
+        <div class="form-fields"><select name="playlist"><option value="">${game.settings.get(ID, "addToPlaylist") ? `YouTube (${t("YTA.Auto")})` : t("YTA.NoPlaylist")}</option>${game.playlists.map(p => `<option value="${p.id}">${foundry.utils.escapeHTML(p.name)}</option>`).join("")}</select></div></div>
       <div class="form-group"><label>${t("YTA.Set.Format")}</label>
         <div class="form-fields"><select name="format">${opts}</select></div></div>
       <div class="yta-progress" hidden>
@@ -311,6 +320,7 @@ function describe(link, meta) {
  * Full pipeline: helper job -> file -> Foundry upload -> PlaylistSound (description = original link).
  * @param {string} url
  * @param {{folder?:string, format?:string, playlist?:string|Playlist, onTitle?:Function, onStep?:Function}} opts
+ * @returns {Promise<PlaylistSound|{path:string}>} the new sound, or just `{path}` when no playlist is used
  */
 export async function importAudio(url, opts = {}) {
   const helper = game.settings.get(ID, "helperUrl").replace(/\/$/, "");
@@ -331,7 +341,8 @@ export async function importAudio(url, opts = {}) {
   await new Promise((resolve, reject) => {
     const es = new EventSource(`${helper}/jobs/${id}/events`);
     es.onmessage = e => {
-      const d = JSON.parse(e.data);
+      let d;
+      try { d = JSON.parse(e.data); } catch { es.close(); return reject(new Error("Bad response from helper")); }
       if (d.title) opts.onTitle?.(d.title);
       if (d.stage === "download") step("download", d.percent);
       else if (d.stage === "setup") opts.onTitle?.(t("YTA.Setup"));
@@ -356,7 +367,14 @@ export async function importAudio(url, opts = {}) {
 
   let pl = opts.playlist;
   if (typeof pl === "string" && pl) pl = game.playlists.get(pl);
-  if (!(pl instanceof Playlist)) pl = game.playlists.getName("YouTube") ?? await Playlist.create({ name: "YouTube" });
+  if (!(pl instanceof Playlist)) {
+    // No playlist chosen and "Add to a playlist after import" is off: keep just the file.
+    if (!game.settings.get(ID, "addToPlaylist")) {
+      if (!opts.quiet) ui.notifications.info(t("YTA.Done", { path }));
+      return { path };
+    }
+    pl = game.playlists.getName("YouTube") ?? await Playlist.create({ name: "YouTube" });
+  }
   const [sound] = await pl.createEmbeddedDocuments("PlaylistSound", [{
     name: name.replace(/\.[^.]+$/, ""), path, description: describe(link, meta)
   }]);
@@ -411,12 +429,9 @@ export async function importPlaylist(url, opts = {}) {
 
 /** Right-click a playlist -> Paste from YouTube: clipboard link straight into that playlist. */
 Hooks.on("getPlaylistContextOptions", (app, options) => {
-  options.push({
-    label: "YTA.Paste",
-    icon: "fa-brands fa-youtube",
-    visible: () => game.user.isGM,
-    onClick: async (event, header) => {
-      const playlistId = header.closest("[data-entry-id]")?.dataset.entryId;
+  const onClick = async (event, target) => {
+      const header = target instanceof HTMLElement ? target : target?.[0];   // v13 may hand a jQuery object
+      const playlistId = header?.closest("[data-entry-id]")?.dataset.entryId;
       const playlist = game.playlists.get(playlistId);
       if (!playlist) return;
       let text = "";
@@ -450,7 +465,13 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
         note?.update?.({ pct: 1 });
         setTimeout(() => ui.notifications.remove?.(note), 500);
       }
-    }
+  };
+  const visible = () => game.user.isGM;
+  // v14 keys (label/visible/onClick) + v13 keys (name/condition/callback); v14 ignores the legacy ones when both exist.
+  options.push({
+    label: "YTA.Paste", name: "YTA.Paste", icon: '<i class="fa-brands fa-youtube"></i>',
+    visible, condition: visible,
+    onClick, callback: target => onClick(null, target)
   });
 });
 
