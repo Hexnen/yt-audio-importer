@@ -81,11 +81,14 @@ function uploadWithProgress(file, target, onProgress) {
     xhr.open("POST", foundry.utils.getRoute("upload"));
     xhr.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total * 100);
     xhr.onload = () => {
+      // A proxy (e.g. Cloudflare's 100 MB cap) answers 413 with an HTML page and, over HTTP/2, an empty statusText: say why.
+      if (xhr.status === 413) return reject(new Error(game.i18n.localize("FILES.ErrorTooLarge")));
+      const fail = `Upload failed (HTTP ${xhr.status}${xhr.statusText ? ` ${xhr.statusText}` : ""})`;
       try {
         const r = JSON.parse(xhr.responseText);
-        if (xhr.status >= 400 || r.error || !r.path) return reject(new Error(r.error ?? r.message ?? xhr.statusText ?? "Upload failed"));
+        if (xhr.status >= 400 || r.error || !r.path) return reject(new Error(r.error || r.message || fail));
         resolve(r);
-      } catch { reject(new Error(xhr.statusText || "Upload failed")); }
+      } catch { reject(new Error(fail)); }
     };
     xhr.onerror = () => reject(new Error("Upload failed"));
     xhr.send(fd);
