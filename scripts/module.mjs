@@ -447,13 +447,15 @@ Hooks.on("getPlaylistContextOptions", (app, options) => {
       if (!playlist) return;
       let text = "";
       try { text = (await navigator.clipboard.readText()).trim(); } catch { /* no permission / insecure context */ }
-      if (!text) {
+      const isLink = s => { const d = detectLink(s); return d.video || d.list; };
+      if (!isLink(text)) {   // empty clipboard, or clipboard holds something that is not a link: ask
         text = await foundry.applications.api.DialogV2.prompt({
           window: { title: t("YTA.Paste"), icon: "fa-brands fa-youtube" },
           content: `<div class="form-group"><label>${t("YTA.Url")}</label><input type="text" name="url" autofocus></div>`,
           ok: { callback: (ev, btn) => btn.form.elements.url.value.trim() },
           rejectClose: false
         });
+        text = (text ?? "").trim();
         if (!text) return;
       }
       const note = ui.notifications.info(t("YTA.Working"), { progress: true });
