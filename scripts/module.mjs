@@ -321,10 +321,15 @@ function describe(link, meta) {
   return out.join("");
 }
 
+/** A world playlist that is no longer in game.playlists (deleted). Compendium documents (API callers) are never in that collection, so they are not checked. */
+function playlistGone(pl) {
+  return !pl.pack && !game.playlists.has(pl.id);
+}
+
 /** Playlist id -> document. An explicit id that no longer exists (deleted meanwhile) is an error, not a silent fallback. */
 function resolvePlaylist(pl) {
   if (pl instanceof Playlist) {   // a document handed in directly (context menu, playlist loop) may have been deleted meanwhile
-    if (!game.playlists.has(pl.id)) throw new Error(t("YTA.PlaylistMissing"));
+    if (playlistGone(pl)) throw new Error(t("YTA.PlaylistMissing"));
     return pl;
   }
   if (typeof pl !== "string" || !pl) return pl;
@@ -428,7 +433,7 @@ export async function importPlaylist(url, opts = {}) {
   const n = info.entries.length;
   for (let i = 0; i < n; i++) {
     if (opts.isCancelled?.()) break;
-    if (!game.playlists.has(pl.id)) throw new Error(t("YTA.PlaylistMissing"));   // deleted mid-import: stop instead of downloading the rest into orphan files
+    if (playlistGone(pl)) throw new Error(t("YTA.PlaylistMissing"));   // deleted mid-import: stop instead of downloading the rest into orphan files
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
     if (pl.sounds.some(s => new RegExp(`[=/]${e.id}(?![\\w-])`).test(s.description ?? ""))) { skipped++; continue; }
