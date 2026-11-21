@@ -323,6 +323,10 @@ function describe(link, meta) {
 
 /** Playlist id -> document. An explicit id that no longer exists (deleted meanwhile) is an error, not a silent fallback. */
 function resolvePlaylist(pl) {
+  if (pl instanceof Playlist) {   // a document handed in directly (context menu, playlist loop) may have been deleted meanwhile
+    if (!game.playlists.has(pl.id)) throw new Error(t("YTA.PlaylistMissing"));
+    return pl;
+  }
   if (typeof pl !== "string" || !pl) return pl;
   const doc = game.playlists.get(pl);
   if (!doc) throw new Error(t("YTA.PlaylistMissing"));
@@ -372,6 +376,7 @@ export async function importAudio(url, opts = {}) {
   step("transfer", 100);
   const name = decodeURIComponent(rawName ?? `youtube-${Date.now()}.${format}`);
   const file = new File([blob], name, { type: blob.type || "audio/ogg" });
+  if (pl instanceof Playlist) resolvePlaylist(pl);   // deleted during the download: do not upload an orphan file
   await ensureFolder(folder);
   const fileName = await uniqueName(folder, name, meta.url ?? link);
   const toUpload = fileName === name ? file : new File([blob], fileName, { type: file.type });
@@ -423,6 +428,7 @@ export async function importPlaylist(url, opts = {}) {
   const n = info.entries.length;
   for (let i = 0; i < n; i++) {
     if (opts.isCancelled?.()) break;
+    if (!game.playlists.has(pl.id)) throw new Error(t("YTA.PlaylistMissing"));   // deleted mid-import: stop instead of downloading the rest into orphan files
     const e = info.entries[i];
     opts.onItem?.(i + 1, n, e.title);
     if (pl.sounds.some(s => new RegExp(`[=/]${e.id}(?![\\w-])`).test(s.description ?? ""))) { skipped++; continue; }
