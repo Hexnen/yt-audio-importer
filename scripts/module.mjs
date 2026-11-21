@@ -195,8 +195,10 @@ class YtImporter extends ApplicationV2 {
     if (!url) return;
     const folder = (form.elements.folder.value || "assets/youtube").replace(/^\/+|\/+$/g, "");
     const format = form.elements.format.value;
-    await game.settings.set(ID, "folder", folder);
-    await game.settings.set(ID, "format", format);
+    try {
+      await game.settings.set(ID, "folder", folder);
+      await game.settings.set(ID, "format", format);
+    } catch (err) { console.warn(`${ID} | could not save folder/format`, err); }   // still import with the chosen values
 
     const box = form.querySelector(".yta-progress");
     const status = box.querySelector(".yta-status");
@@ -244,6 +246,9 @@ class YtImporter extends ApplicationV2 {
       this.#busy = false;
       cancelBtn.hidden = true;
       form.elements.url.dispatchEvent(new Event("input"));
+      // Window closed and reopened mid-import: the new form rendered with disabled buttons; re-enable it too.
+      const live = this.element?.querySelector("form");
+      if (live && live !== form) live.elements.url.dispatchEvent(new Event("input"));
     }
   }
 }
