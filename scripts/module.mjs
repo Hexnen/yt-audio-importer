@@ -222,6 +222,8 @@ class YtImporter extends ApplicationV2 {
     this.#busy = true;
     const ctl = (this.ctl = { cancelled: false });
     status.textContent = "";
+    box.querySelector(".yta-title").textContent = "";   // second run: no stale title / playlist bar from the previous import
+    bars.playlist(0);
     resetItem();
     const common = {
       folder, format, playlist: form.elements.playlist.value,
