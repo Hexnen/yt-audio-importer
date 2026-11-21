@@ -240,7 +240,9 @@ class YtImporter extends ApplicationV2 {
           onItem: (i, n, title) => { resetItem(); bars.playlist((i - 1) / n * 100); box.querySelector(".yta-title").textContent = `${i}/${n} - ${title}`; }
         });
         bars.playlist(100);
-        status.textContent = t("YTA.PlaylistDone", { ok: res.ok, total: res.total, failed: res.failed.length, skipped: res.skipped, name: res.playlist.name });
+        status.textContent = t("YTA.PlaylistDone", { ok: res.ok, total: res.total, failed: res.failed.length, skipped: res.skipped, name: res.playlist.name })
+          + res.failed.slice(0, 10).map(f => `\n• ${f.title}: ${f.error}`).join("") + (res.failed.length > 10 ? "\n…" : "");   // which items failed and why (all in the console)
+        status.style.whiteSpace = "pre-line";
       } else {
         const sound = await importAudio(url, common);
         status.textContent = t("YTA.Done", { path: sound.path });
@@ -450,6 +452,7 @@ export async function importPlaylist(url, opts = {}) {
       ok++;
     } catch (err) {
       if (err.noHelper) throw err;
+      console.warn(`${ID} | playlist item failed: ${e.title}`, err);   // callers only show the count; keep the reason findable
       failed.push({ title: e.title, error: err.message });
     }
   }
